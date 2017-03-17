@@ -115,8 +115,18 @@ func TestDeviceDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if expWL := "0:450nm:10.2W,1:660nm:5.2W,2:735nm:10.0W,3:5700K:6.0W,"; expWL != diag.Wavelengths {
-		t.Errorf("expected wavelengths=%s, got %s", expWL, diag.Wavelengths)
+	if expModel := "L4"; expModel != diag.Model {
+		t.Errorf("expected model=%q, got %q", expModel, diag.Model)
+	}
+	expWavelengths := WavelengthList{
+		{Number: 0, Wavelength: "450nm", Power: "10.2W"},
+		{Number: 1, Wavelength: "660nm", Power: "5.2W"},
+		{Number: 2, Wavelength: "735nm", Power: "10.0W"},
+		{Number: 3, Wavelength: "5700K", Power: "6.0W"},
+	}
+	if !reflect.DeepEqual(expWavelengths, diag.Wavelengths) {
+		t.Errorf("expected wavelengths=%#v\n\tgot %#v", expWavelengths, diag.Wavelengths)
+		t.Logf("DIAG: %+v\n", diag)
 	}
 
 	statusToReturn = 400
