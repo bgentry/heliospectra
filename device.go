@@ -1,6 +1,7 @@
 package heliospectra
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
@@ -30,7 +31,7 @@ func NewDevice(addr net.IP, client *http.Client) *Device {
 // Diagnostic executes a diagnostic request against the Device.
 func (d *Device) Diagnostic(ctx context.Context) (*Diagnostic, error) {
 	u := url.URL{
-		Host:   d.addr.String() + ":" + strconv.Itoa(TCPPort),
+		Host:   d.addr.String(),
 		Scheme: "http",
 		Path:   "diag.xml",
 	}
@@ -39,10 +40,14 @@ func (d *Device) Diagnostic(ctx context.Context) (*Diagnostic, error) {
 		return nil, err
 	}
 	req.WithContext(ctx)
+	req.Header.Set("Connection", "close")
+
 	res, err := d.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
+	defer res.Body.Close()
+
 	if res.StatusCode != 200 {
 		return nil, fmt.Errorf("unexpected status code %d", res.StatusCode)
 	}
@@ -51,6 +56,49 @@ func (d *Device) Diagnostic(ctx context.Context) (*Diagnostic, error) {
 		return nil, err
 	}
 	return diag, nil
+}
+
+// SetIntensities sets the intensities for each wavelength of this Device. You
+// must provide the same number of intensities as the number of distinct
+// wavelengths this Device has.
+func (d *Device) SetIntensities(ctx context.Context, intensities ...int) error {
+	var buf bytes.Buffer
+	for i, intensity := range intensities {
+		if i != 0 {
+			if err := buf.WriteByte(':'); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(&buf, "%d", intensity); err != nil {
+			return err
+		}
+	}
+	u := url.URL{
+		Host:   d.addr.String(),
+		Scheme: "http",
+		Path:   "intensity.cgi",
+	}
+	q := u.Query()
+	q.Set("int", buf.String())
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return err
+	}
+	req.WithContext(ctx)
+	req.Header.Set("Connection", "close")
+
+	res, err := d.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != 200 {
+		return fmt.Errorf("unexpected status code %d", res.StatusCode)
+	}
+	return nil
 }
 
 // WavelengthDescription is a description of an available wavelength on a Device.

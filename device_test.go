@@ -5,8 +5,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,7 +74,7 @@ const diagResponse = `
 	<tags>0|^|name|^||~|</tags>
 </diagnostic>`
 
-func TestDeviceDiagnostic(t *testing.T) {
+func TestDevice_Diagnostic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -82,6 +82,12 @@ func TestDeviceDiagnostic(t *testing.T) {
 	bodyToReturn := diagResponse
 
 	diagHandler := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/diag.xml" {
+			t.Errorf("expected URL /diag.xml, got %s", r.URL.Path)
+		}
 		w.WriteHeader(statusToReturn)
 		if _, err := w.Write([]byte(bodyToReturn)); err != nil {
 			t.Fatal(err)
@@ -95,7 +101,7 @@ func TestDeviceDiagnostic(t *testing.T) {
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				expectedAddr := testIP.String() + ":" + strconv.Itoa(TCPPort)
+				expectedAddr := testIP.String() + ":80"
 				if addr != expectedAddr {
 					t.Errorf("expected request to be sent to %s, was sent to %s", expectedAddr, addr)
 				}
@@ -139,5 +145,60 @@ func TestDeviceDiagnostic(t *testing.T) {
 	bodyToReturn = `{"some":"json"}`
 	if _, err = device.Diagnostic(ctx); err == nil {
 		t.Errorf("expected an error on a non-XML body, got none")
+	}
+}
+
+func TestDevice_SetIntensities(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	statusToReturn := 200
+	expectedQuery := url.Values{"int": []string{"1:2:3:4"}}
+
+	diagHandler := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(expectedQuery, r.Form) {
+			t.Errorf("expected query %#v, got %#v", expectedQuery, r.Form)
+		}
+		if r.URL.Path != "/intensity.cgi" {
+			t.Errorf("expected URL /intensity.cgi, got %s", r.URL.Path)
+		}
+		w.WriteHeader(statusToReturn)
+	}
+	server := httptest.NewServer(http.HandlerFunc(diagHandler))
+	defer server.Close()
+
+	testIP := net.IPv4(192, 168, 1, 8)
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				expectedAddr := testIP.String() + ":80"
+				if addr != expectedAddr {
+					t.Errorf("expected request to be sent to %s, was sent to %s", expectedAddr, addr)
+				}
+				// override the DialContext func to only dial to our test server:
+				return (&net.Dialer{
+					Timeout:   1 * time.Second,
+					KeepAlive: 1 * time.Second,
+					DualStack: false,
+				}).DialContext(ctx, network, strings.TrimPrefix(server.URL, "http://"))
+			},
+		},
+	}
+
+	device := NewDevice(testIP, client)
+	if err := device.SetIntensities(ctx, 1, 2, 3, 4); err != nil {
+		t.Fatal(err)
+	}
+
+	statusToReturn = 400
+	if err := device.SetIntensities(ctx, 1, 2, 3, 4); err == nil {
+		t.Errorf("expected an error on status 400, got none")
 	}
 }
