@@ -202,3 +202,107 @@ func TestDevice_SetIntensities(t *testing.T) {
 		t.Errorf("expected an error on status 400, got none")
 	}
 }
+
+const statusResponse = `<r>
+<a>2017:03:17:19:07:56</a>
+<b>Not running</b>
+<c>OK</c>
+<d>0d 02h 39m 37s</d>
+<e>2017-03-17	18:58:34</e>
+<f>Web</f>
+<g>192.168.1.3</g>
+<h>Light setting</h>
+<i>0:26.0C,</i>
+<j>0:0,1:0,2:0,3:0,</j>
+<k> </k>
+<l> </l>
+<m>Independent</m>
+<n>C:on</n>
+<o>off:Enter your message here:heliospectra</o>
+<p> </p>
+<q>on, pool.ntp.org, 00:00:00</q>
+<s>on</s>
+<r></r>
+<t>0.0A,0.0W</t>
+</r>`
+
+func TestDevice_Status(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	statusToReturn := 200
+	bodyToReturn := statusResponse
+
+	statusHandler := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/status.xml" {
+			t.Errorf("expected URL /status.xml, got %s", r.URL.Path)
+		}
+		w.WriteHeader(statusToReturn)
+		if _, err := w.Write([]byte(bodyToReturn)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(statusHandler))
+	defer server.Close()
+
+	testIP := net.IPv4(192, 168, 1, 8)
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				expectedAddr := testIP.String() + ":80"
+				if addr != expectedAddr {
+					t.Errorf("expected request to be sent to %s, was sent to %s", expectedAddr, addr)
+				}
+				// override the DialContext func to only dial to our test server:
+				return (&net.Dialer{
+					Timeout:   1 * time.Second,
+					KeepAlive: 1 * time.Second,
+					DualStack: false,
+				}).DialContext(ctx, network, strings.TrimPrefix(server.URL, "http://"))
+			},
+		},
+	}
+
+	device := NewDevice(testIP, client)
+	status, err := device.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := &Status{
+		InternalTime: "2017:03:17:19:07:56",
+		OnSchedule:   "Not running",
+		Status:       "OK",
+		Uptime:       "0d 02h 39m 37s",
+		LastChangeAt: "2017-03-17	18:58:34",
+		LastChangeInterface: "Web",
+		LastChangeBy:        net.IPv4(192, 168, 1, 3),
+		LastChangeType:      "Light setting",
+		Temp:                "0:26.0C,",
+		Intensities:         "0:0,1:0,2:0,3:0,",
+		Masters:             " ",
+		Reserved:            " ",
+		ControlMode:         "Independent",
+		NTPTimeSettings:     "on, pool.ntp.org, 00:00:00",
+	}
+
+	if !reflect.DeepEqual(expected, status) {
+		t.Errorf("expected status=%#v\n\ngot status=%#v", expected, status)
+	}
+
+	statusToReturn = 400
+	_, err = device.Status(ctx)
+	if err == nil {
+		t.Errorf("expected an error on status 400, got none")
+	}
+
+	statusToReturn = 200
+	bodyToReturn = `{"some":"json"}`
+	if _, err = device.Status(ctx); err == nil {
+		t.Errorf("expected an error on a non-XML body, got none")
+	}
+}

@@ -101,6 +101,36 @@ func (d *Device) SetIntensities(ctx context.Context, intensities ...int) error {
 	return nil
 }
 
+// Status executes a status request against the Device.
+func (d *Device) Status(ctx context.Context) (*Status, error) {
+	u := url.URL{
+		Host:   d.addr.String(),
+		Scheme: "http",
+		Path:   "status.xml",
+	}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.WithContext(ctx)
+	req.Header.Set("Connection", "close")
+
+	res, err := d.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("unexpected status code %d", res.StatusCode)
+	}
+	status := &Status{}
+	if err = xml.NewDecoder(res.Body).Decode(status); err != nil {
+		return nil, err
+	}
+	return status, nil
+}
+
 // WavelengthDescription is a description of an available wavelength on a Device.
 type WavelengthDescription struct {
 	Number     uint8
@@ -185,4 +215,22 @@ type Diagnostic struct {
 	NTPData        string         `xml:"ntpData"`
 	MulticastIP    string         `xml:"multicastIP"`
 	Tags           string         `xml:"tags"`
+}
+
+// Status is the response to a status.xml call.
+type Status struct {
+	InternalTime        string `xml:"a"`
+	OnSchedule          string `xml:"b"`
+	Status              string `xml:"c"`
+	Uptime              string `xml:"d"`
+	LastChangeAt        string `xml:"e"`
+	LastChangeInterface string `xml:"f"`
+	LastChangeBy        net.IP `xml:"g"`
+	LastChangeType      string `xml:"h"`
+	Temp                string `xml:"i"`
+	Intensities         string `xml:"j"`
+	Masters             string `xml:"k"`
+	Reserved            string `xml:"l"`
+	ControlMode         string `xml:"m"`
+	NTPTimeSettings     string `xml:"q"`
 }
