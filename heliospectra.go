@@ -90,7 +90,6 @@ func udpScanReceive(ctx context.Context, conn *net.UDPConn, ch chan<- DeviceInfo
 		if err != nil {
 			return
 		}
-		fmt.Println("received data:", read, remoteAddr, err)
 		if remoteAddr.Port != UDPPort {
 			continue
 		}
