@@ -15,11 +15,40 @@ const (
 	TCPPort = 50630
 	// UDPPort is the UDP Port that Heliospectra LED fixtures listen on.
 	UDPPort = 50632
+)
 
-	// CommandIDScan is the command used to perform a scan.
-	CommandIDScan = 0
-	// CommandIDScanResponse is the command received in response to scans.
-	CommandIDScanResponse = 6
+type commandID uint8
+
+const (
+	// commandIDQuery is the command used to query for available devices.
+	commandIDQuery commandID = 0
+	// commandIDUnmute includes the device in a selective device query.
+	commandIDUnmute commandID = 1
+	// commandIDQueryUnmuted is the same as a Query, but only unmuted devices
+	// shall send a response.
+	commandIDQueryUnmuted commandID = 2
+	// commandIDMute excludes the lamp from a selective device query. Only affects
+	// QUERY_UNMUTED (commandIDQueryUnmuted) queries.
+	commandIDMute commandID = 3
+	// commandIDSet sets the device network configuration.
+	commandIDSet commandID = 4
+	// commandIDRestart restarts a device.
+	commandIDRestart commandID = 5
+	// commandIDInfoReply is sent by each lamp receiving a QUERY package. Each
+	// will send (possibly multiple) INFO_REPLY packagescontaining basic device
+	// information.
+	commandIDInfoReply commandID = 6
+	// commandIDSetCommand sets the device light intensities.
+	commandIDSetCommand commandID = 7
+	// commandIDSetCommand sets the device light intensities.
+	// commandIDSendAddMasterToSlave is a broadcast sent from masters to announce
+	// to all lamps. Sent on startup, when lamp is set as master, and periodically
+	// every 90s.
+	commandIDSendAddMasterToSlave commandID = 8
+	// commandIDSendSetWavelengthsRelativePower is a light intensity message
+	// broadcast from masters to all lamps.	Sent on startup, when lamp is set as
+	// master and periodically every 60s.
+	commandIDSendSetWavelengthsRelativePower commandID = 9
 )
 
 // DeviceInfo is the information about a device returned during a scan.
@@ -64,7 +93,7 @@ func ScanUDP(ctx context.Context) ([]DeviceInfo, error) {
 	ch := make(chan DeviceInfo)
 	go udpScanReceive(ctx, recvSocket, ch)
 
-	payload, err := MakeUDPPayloadShort(CommandIDScan)
+	payload, err := makeUDPPayloadShort(commandIDQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -72,11 +101,15 @@ func ScanUDP(ctx context.Context) ([]DeviceInfo, error) {
 		return nil, err
 	}
 
+	resultSerials := make(map[string]bool)
 	results := make([]DeviceInfo, 0, 64)
 	for {
 		select {
 		case di := <-ch:
-			results = append(results, di)
+			if !resultSerials[di.SerialNum] {
+				resultSerials[di.SerialNum] = true
+				results = append(results, di)
+			}
 		case <-ctx.Done():
 			return results, nil
 		}
@@ -96,8 +129,8 @@ func udpScanReceive(ctx context.Context, conn *net.UDPConn, ch chan<- DeviceInfo
 		if read < 17 {
 			continue // invalid, scan results must be > 17 chars
 		}
-		cmdID := data[12]
-		if cmdID != CommandIDScanResponse {
+		cmdID := commandID(data[12])
+		if cmdID != commandIDInfoReply {
 			continue // we only care about scan responses
 		}
 		xmldata := data[16:read]
@@ -114,17 +147,17 @@ func udpScanReceive(ctx context.Context, conn *net.UDPConn, ch chan<- DeviceInfo
 	}
 }
 
-// MakeUDPPayloadShort makes a UDP command payload using default values.
-func MakeUDPPayloadShort(cmd uint8) ([]byte, error) {
+// makeUDPPayloadShort makes a UDP command payload using default values.
+func makeUDPPayloadShort(cmd commandID) ([]byte, error) {
 	hwAddr, err := net.ParseMAC("FF:FF:FF:FF:FF:FF")
 	if err != nil {
 		return nil, err
 	}
-	return MakeUDPPayload(cmd, hwAddr, nil)
+	return makeUDPPayload(cmd, hwAddr, nil)
 }
 
-// MakeUDPPayload makes a UDP command payload.
-func MakeUDPPayload(cmd uint8, mac net.HardwareAddr, data []byte) ([]byte, error) {
+// makeUDPPayload makes a UDP command payload.
+func makeUDPPayload(cmd commandID, mac net.HardwareAddr, data []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	if _, err := buf.Write([]byte("ABC321")); err != nil {
 		return nil, err
@@ -162,7 +195,7 @@ func MakeUDPPayload(cmd uint8, mac net.HardwareAddr, data []byte) ([]byte, error
 	return buf.Bytes(), nil
 }
 
-func cmdAsHex(cmd uint8) ([]byte, error) {
+func cmdAsHex(cmd commandID) ([]byte, error) {
 	dst := make([]byte, 1)
 	_, err := hex.Decode(dst, []byte(fmt.Sprintf("%02d", cmd)))
 	return dst, err
